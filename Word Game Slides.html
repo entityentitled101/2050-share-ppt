@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文字游戏</title>
+<style>
+  :root {
+    --font-family: "PingFang SC", "Heiti SC", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+    --font-scale: 1;
+    --print-ratio-w: 16;
+    --print-ratio-h: 9;
+  }
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: var(--font-family);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .canvas-wrapper {
+    width: 100vw; height: 100vh;
+    display: flex;
+    align-items: center; justify-content: center;
+    background: #e5e5e5;
+    transition: background 0.4s ease;
+    position: relative;
+  }
+  body[data-ratio="fullscreen"] .canvas-wrapper {
+    background: #ffffff;
+  }
+  body[data-layout="scroll"] .canvas-wrapper {
+    display: block;
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .canvas {
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.06);
+    transition: width 0.4s ease, height 0.4s ease;
+  }
+  body[data-ratio="fullscreen"] .canvas { box-shadow: none; }
+  body[data-layout="scroll"] .canvas {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100vh;
+    box-shadow: none;
+  }
+
+  body[data-ratio="fullscreen"] .canvas {
+    width: 100vw; height: 100vh;
+  }
+  body[data-ratio="16:9"] .canvas {
+    width: min(100vw, calc(100vh * 16 / 9));
+    height: min(100vh, calc(100vw * 9 / 16));
+  }
+  body[data-ratio="4:3"] .canvas {
+    width: min(100vw, calc(100vh * 4 / 3));
+    height: min(100vh, calc(100vw * 3 / 4));
+  }
+
+  .bleed-layer {
+    position: absolute;
+    pointer-events: none; z-index: 50;
+    display: none;
+  }
+  body[data-bleed="on"]:not([data-ratio="fullscreen"]):not([data-layout="scroll"]) .bleed-layer {
+    display: block;
+  }
+
+  .bleed-h, .bleed-v {
+    position: absolute;
+    background: rgba(0,0,0,0.45);
+  }
+  .bleed-h { height: 1px; }
+  .bleed-v { width: 1px; }
+
+  .tl-h { top: 0; left: calc(var(--cw) * -0.022); width: calc(var(--cw) * 0.022); }
+  .tl-v { top: calc(var(--ch) * -0.022); left: 0; height: calc(var(--ch) * 0.022); }
+  .tr-h { top: 0; right: calc(var(--cw) * -0.022); width: calc(var(--cw) * 0.022); }
+  .tr-v { top: calc(var(--ch) * -0.022); right: 0; height: calc(var(--ch) * 0.022); }
+  .bl-h { bottom: 0; left: calc(var(--cw) * -0.022); width: calc(var(--cw) * 0.022); }
+  .bl-v { bottom: calc(var(--ch) * -0.022); left: 0; height: calc(var(--ch) * 0.022); }
+  .br-h { bottom: 0; right: calc(var(--cw) * -0.022); width: calc(var(--cw) * 0.022); }
+  .br-v { bottom: calc(var(--ch) * -0.022); right: 0; height: calc(var(--ch) * 0.022); }
+
+  .stage {
+    width: 100%; height: 100%;
+    position: relative;
+  }
+  body[data-layout="scroll"] .stage {
+    position: static;
+    height: auto;
+  }
+
+  .slide {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: calc(var(--ch) * 0.08) calc(var(--cw) * 0.1);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.5s ease;
+    z-index: 0;
+  }
+  .slide.active { opacity: 1; pointer-events: auto; z-index: 1; }
+
+  body[data-layout="scroll"] .slide {
+    position: relative;
+    opacity: 1;
+    pointer-events: auto;
+    height: auto;
+    min-height: 100vh;
+    page-break-after: always;
+  }
+  body[data-layout="scroll"] .slide:last-child {
+    page-break-after: auto;
+  }
+
+  h1 {
+    font-size: calc(var(--cw) * 0.050 * var(--font-scale));
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5em;
+  }
+  h2 {
+    font-size: calc(var(--cw) * 0.032 * var(--font-scale));
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.9em;
+  }
+  .subtitle {
+    font-size: calc(var(--cw) * 0.018 * var(--font-scale));
+    font-weight: 400;
+    line-height: 1.6;
+    opacity: 0.7;
+    margin-top: 0.4em;
+  }
+  .bullet {
+    font-size: calc(var(--cw) * 0.018 * var(--font-scale));
+    font-weight: 400;
+    line-height: 1.65;
+    margin-bottom: 0.55em;
+    display: flex;
+    align-items: baseline;
+    gap: 0.4em;
+  }
+  .bullet::before {
+    content: "—";
+    flex-shrink: 0;
+    opacity: 0.45;
+    margin-right: 0.2em;
+  }
+  .caption {
+    font-size: calc(var(--cw) * 0.013 * var(--font-scale));
+    font-weight: 400;
+    line-height: 1.5;
+    opacity: 0.6;
+    margin-top: 0.8em;
+    font-style: italic;
+  }
+
+  .centered { text-align: center; align-items: center; }
+  .left     { text-align: left;   align-items: flex-start; }
+  .bottom   { margin-top: auto; padding-bottom: calc(var(--ch) * 0.05); }
+
+  .deco-number {
+    position: absolute;
+    right: calc(var(--cw) * 0.04);
+    bottom: calc(var(--ch) * 0.02);
+    font-size: calc(var(--cw) * 0.22);
+    font-weight: 700;
+    line-height: 0.85;
+    opacity: 0.15;
+    pointer-events: none;
+    user-select: none;
+    z-index: 0;
+  }
+
+  .numbered-list {
+    list-style: decimal;
+    padding-left: calc(var(--cw) * 0.025);
+  }
+  .numbered-list li {
+    font-size: calc(var(--cw) * 0.018 * var(--font-scale));
+    line-height: 1.65;
+    margin-bottom: 0.4em;
+    padding-left: 0.3em;
+  }
+
+  .slide-row {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--cw) * 0.05);
+    width: 100%;
+  }
+  .slide-col {
+    flex: 1;
+    min-width: 0;
+  }
+
+  body[data-reveal="line"] .reveal-item {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  body[data-reveal="line"] .reveal-item.revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  body[data-reveal="page"] .reveal-item,
+  body[data-layout="scroll"] .reveal-item {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .menu-btn {
+    position: absolute;
+    top: calc(var(--ch) * 0.04);
+    right: calc(var(--cw) * 0.04);
+    width: 26px;
+    height: 20px;
+    cursor: pointer;
+    z-index: 100;
+  }
+  .menu-btn span {
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: #000;
+    transition: all 0.3s ease;
+  }
+  .menu-btn span:nth-child(1) { top: 0; }
+  .menu-btn span:nth-child(2) { top: 50%; transform: translateY(-50%); }
+  .menu-btn span:nth-child(3) { bottom: 0; }
+  .menu-btn:hover span { opacity: 0.45; }
+  .menu-btn.open span:nth-child(1) { top: 50%; transform: translateY(-50%) rotate(45deg); }
+  .menu-btn.open span:nth-child(2) { opacity: 0; }
+  .menu-btn.open span:nth-child(3) { bottom: 50%; transform: translateY(50%) rotate(-45deg); }
+
+  .menu-panel {
+    position: absolute;
+    top: calc(var(--ch) * 0.09);
+    right: calc(var(--cw) * 0.04);
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.12);
+    padding: 18px;
+    z-index: 99;
+    min-width: 170px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-6px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .menu-panel.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  .menu-section { margin-bottom: 16px; }
+  .menu-section:last-child { margin-bottom: 0; }
+  .menu-label {
+    font-size: 10px;
+    opacity: 0.35;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .menu-options { display: flex; gap: 6px; flex-wrap: wrap; }
+  .menu-options button {
+    background: transparent;
+    border: 1px solid rgba(0,0,0,0.1);
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    color: #000;
+    transition: all 0.2s ease;
+    border-radius: 1px;
+  }
+  .menu-options button:hover { border-color: rgba(0,0,0,0.5); }
+  .menu-options button.active {
+    background: #000;
+    color: #fff;
+    border-color: #000;
+  }
+
+  .pager {
+    position: absolute;
+    bottom: calc(var(--ch) * 0.04);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+  }
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+  .dot.active { background: rgba(0,0,0,0.45); }
+
+  .nav-hint {
+    position: absolute;
+    bottom: calc(var(--ch) * 0.04);
+    right: calc(var(--cw) * 0.05);
+    font-size: calc(var(--cw) * 0.009 * var(--font-scale));
+    color: rgba(0,0,0,0.18);
+    z-index: 10;
+    user-select: none;
+    pointer-events: none;
+  }
+
+  body[data-layout="scroll"] .pager,
+  body[data-layout="scroll"] .nav-hint {
+    display: none;
+  }
+
+  @media print {
+    @page { size: landscape; margin: 0; }
+
+    html, body { overflow: visible !important; height: auto !important; }
+
+    .canvas-wrapper {
+      display: block !important;
+      background: #fff !important;
+      width: auto !important; height: auto !important;
+      overflow: visible !important;
+      align-items: flex-start !important;
+      justify-content: flex-start !important;
+    }
+
+    .canvas {
+      width: 100% !important;
+      height: auto !important;
+      box-shadow: none !important;
+      overflow: visible !important;
+    }
+
+    .stage {
+      position: static !important;
+      height: auto !important;
+    }
+
+    .slide {
+      position: relative !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      width: 100% !important;
+      height: 100vh !important;
+      min-height: 100vh !important;
+      page-break-after: always !important;
+      page-break-inside: avoid !important;
+      overflow: visible !important;
+      padding: 8vh 10vw !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+    }
+    .slide:last-child { page-break-after: auto !important; }
+
+    h1 { font-size: 4.8vw !important; line-height: 1.15 !important; margin-bottom: 0.5em !important; }
+    h2 { font-size: 2.6vw !important; line-height: 1.25 !important; margin-bottom: 0.8em !important; }
+    .subtitle { font-size: 1.6vw !important; line-height: 1.5 !important; }
+    .bullet { font-size: 1.55vw !important; line-height: 1.6 !important; margin-bottom: 0.5em !important; }
+    .caption { font-size: 1.2vw !important; line-height: 1.4 !important; }
+    .deco-number { font-size: 20vw !important; right: 4vw !important; bottom: 2vh !important; }
+    .numbered-list { padding-left: 2.5vw !important; }
+    .numbered-list li { font-size: 1.55vw !important; margin-bottom: 0.4em !important; }
+    .slide-row { gap: 5vw !important; }
+    .slide-col { flex: 1 !important; }
+    .bottom { margin-top: auto !important; padding-bottom: 5vh !important; }
+
+    .menu-btn, .menu-panel, .pager, .nav-hint, .bleed-layer { display: none !important; }
+
+    .reveal-item {
+      opacity: 1 !important;
+      transform: none !important;
+    }
+  }
+</style>
+</head>
+
+<body data-ratio="16:9" data-font="sans" data-bleed="off" data-reveal="page" data-layout="slides" data-size="normal">
+
+<div class="canvas-wrapper">
+  <div class="canvas" id="canvas">
+
+    <!-- Menu Button -->
+    <div class="menu-btn" id="menuBtn">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+
+    <!-- Menu Panel -->
+    <div class="menu-panel" id="menuPanel">
+      <div class="menu-section">
+        <div class="menu-label">字体 Font</div>
+        <div class="menu-options">
+          <button data-action="font" data-value="serif">宋体 Serif</button>
+          <button class="active" data-action="font" data-value="sans">黑体 Sans</button>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">字号 Size</div>
+        <div class="menu-options">
+          <button data-action="size" data-value="small">小 S</button>
+          <button class="active" data-action="size" data-value="normal">中 M</button>
+          <button data-action="size" data-value="large">大 L</button>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">比例 Ratio</div>
+        <div class="menu-options">
+          <button data-action="ratio" data-value="fullscreen">全屏</button>
+          <button class="active" data-action="ratio" data-value="16:9">16:9</button>
+          <button data-action="ratio" data-value="4:3">4:3</button>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">出血线 Bleed</div>
+        <div class="menu-options">
+          <button class="active" data-action="bleed" data-value="off">关 Off</button>
+          <button data-action="bleed" data-value="on">开 On</button>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">播放 Playback</div>
+        <div class="menu-options">
+          <button class="active" data-action="reveal" data-value="page">整页 Page</button>
+          <button data-action="reveal" data-value="line">逐行 Line</button>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">布局 Layout</div>
+        <div class="menu-options">
+          <button class="active" data-action="layout" data-value="slides">幻灯片</button>
+          <button data-action="layout" data-value="scroll">长卷轴</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage / Slides -->
+    <div class="stage" id="stage">
+
+      <!-- Page 0: Title -->
+      <div class="slide active centered" id="slide-0">
+        <h1>文字游戏</h1>
+        <p class="subtitle reveal-item">溯源与推演：在AI时代重访新小说的算法诗学</p>
+      </div>
+
+      <!-- Page 1: Decorative 00 -->
+      <div class="slide centered" id="slide-1">
+        <div class="deco-number">00</div>
+        <h2 style="margin-top: auto; padding-bottom: calc(var(--ch) * 0.15);">限制即自由</h2>
+      </div>
+
+      <!-- Page 2: Content -->
+      <div class="slide left" id="slide-2">
+        <h2>限制即自由</h2>
+        <div class="bullet reveal-item">用AI生成叙事，用算法写小说</div>
+        <div class="bullet reveal-item">这件事，半个世纪前就有人在玩了</div>
+        <div class="bullet reveal-item">乌力波（Oulipo, Ouvroir de Littérature Potentielle）</div>
+        <div class="bullet reveal-item">乔治·佩雷克（Georges Perec） / 伊塔洛·卡尔维诺（Italo Calvino）</div>
+      </div>
+
+      <!-- Page 3: Content -->
+      <div class="slide left" id="slide-3">
+        <h2>乌力波：限制即自由</h2>
+        <div class="content-group reveal-item">
+          <div class="bullet" style="font-weight: 700;">乔治·佩雷克（Georges Perec）</div>
+          <div class="bullet">《漏字文》（<i>La Disparition</i>）</div>
+          <div class="bullet">一个字母"e"都没有</div>
+        </div>
+        <div class="content-group reveal-item" style="margin-top: 1.2em;">
+          <div class="bullet" style="font-weight: 700;">伊塔洛·卡尔维诺（Italo Calvino）</div>
+          <div class="bullet">《看不见的城市》（<i>Le città invisibili</i>）</div>
+          <div class="bullet">55座城市、11个主题、严格的数学置换结构</div>
+        </div>
+        <div class="content-group reveal-item" style="margin-top: 1.2em;">
+          <div class="bullet" style="font-weight: 700;">伊塔洛·卡尔维诺（Italo Calvino）</div>
+          <div class="bullet">《如果在冬夜，一个旅人》（<i>Se una notte d'inverno un viaggiatore</i>）</div>
+          <div class="bullet">10个完全不同风格的小说开头，每一个在最精彩的地方被打断</div>
+        </div>
+      </div>
+
+      <!-- Page 4: Content -->
+      <div class="slide left" id="slide-4">
+        <h2>乌力波：对媒介的清醒认知</h2>
+        <div class="bullet reveal-item">他们真的知道自己在写小说</div>
+        <div class="bullet reveal-item">他们完全明白一件事：自己使用的媒介叫"小说"，而小说由"文字"构成</div>
+        <div class="bullet reveal-item">他们不是在用文字讲故事，他们是在探索"文字作为媒介"本身的边界</div>
+      </div>
+
+      <!-- Page 5: Decorative 01 -->
+      <div class="slide centered" id="slide-5">
+        <div class="deco-number">01</div>
+        <h2 style="margin-top: auto; padding-bottom: calc(var(--ch) * 0.15);">算法作为叙事的骨架</h2>
+      </div>
+
+      <!-- Page 6: Content -->
+      <div class="slide left" id="slide-6">
+        <h2>1979年的文学结构，2025年的AI激活</h2>
+        <div class="bullet reveal-item">如果AI的本质是排列重组，乌力波的精神其实就是算法的史前文明</div>
+        <div class="bullet reveal-item">如果我们把一个1979年的文学结构，用2025年的AI重新激活，会发生什么？</div>
+      </div>
+
+      <!-- Page 7: Content -->
+      <div class="slide left" id="slide-7">
+        <h2>范式的反转</h2>
+        <div class="bullet reveal-item">在《命运交叉的城堡》中，卡尔维诺用塔罗牌讲故事</div>
+        <div class="bullet reveal-item">每张塔罗牌都是一个可以被无尽阐释的概念图式，一牌多义</div>
+        <div class="bullet reveal-item">每个人用塔罗牌讲自己的故事，但必然会跨过别人的牌，产生交叉</div>
+        <div class="bullet reveal-item">正、反、再反转</div>
+        <div class="caption reveal-item" style="margin-top: 1em; font-weight: 700; font-style: normal;">Paradigm Reverser（范式反转者）</div>
+        <div class="bullet reveal-item" style="margin-top: 1em;">英雄在残酷的战争后启程回家，在大海上漂泊十年，经历妖魔鬼怪的诱惑与神明的阻挠，他的妻子在故乡苦等，而他最终凭借智慧与武力夺回了自己的王位</div>
+        <div class="bullet reveal-item" style="justify-content: center; font-size: calc(var(--cw) * 0.03); margin: 0.3em 0;">↓</div>
+        <div class="bullet reveal-item">懦夫在温馨的和平后踏上流亡，在大海上漂泊十年……</div>
+      </div>
+
+      <!-- Page 8: Content -->
+      <div class="slide left" id="slide-8">
+        <h2>想象一种非线性阅读的方式</h2>
+        <div class="bullet reveal-item">《人生拼图板》（<i>La Vie mode d'emploi</i>）</div>
+        <div class="bullet reveal-item">描述了一栋巴黎公寓楼的每一户居民</div>
+        <div class="bullet reveal-item">但它的章节结构基于国际象棋里的"骑士巡游问题"</div>
+        <div class="bullet reveal-item">在8×8的棋盘上，骑士能否恰好经过每一个方格一次且仅一次？</div>
+        <div class="caption reveal-item" style="margin-top: 1em; font-weight: 700; font-style: normal;">Project Bookworm（吃书虫计划）</div>
+        <div class="bullet reveal-item" style="margin-top: 0.8em;">如果我们想象阅读不再是一种横向打开的界面，而是一种钻探</div>
+        <div class="bullet reveal-item">如果乌力波的参与者们看到今天的AI，他们会感受到什么呢？</div>
+        <div class="bullet reveal-item">我觉得他们会狂喜的。</div>
+      </div>
+
+      <!-- Page 9: Decorative 02 -->
+      <div class="slide centered" id="slide-9">
+        <div class="deco-number">02</div>
+        <h2 style="margin-top: auto; padding-bottom: calc(var(--ch) * 0.15);">从文字作为一种媒介，到大语言模型作为一种媒介</h2>
+      </div>
+
+      <!-- Page 10: Content -->
+      <div class="slide left" id="slide-10">
+        <h2>乌力波的启示：媒介自觉</h2>
+        <div class="bullet reveal-item">乌力波的启示：媒介自觉——知道自己在用什么媒介创作</div>
+        <div class="bullet reveal-item">当我们从纸笔转向AI，我们需要同样的媒介自觉</div>
+        <div class="bullet reveal-item">作为大语言模型的AI，当我们和它一起创作的时候，它有什么根本特性是我们需要注意的，并且可以用来玩耍的？</div>
+        <ol class="numbered-list reveal-item" style="margin-top: 0.8em;">
+          <li>文字的扁平化/均质化</li>
+          <li>文字世界的哥德尔不完备性</li>
+        </ol>
+      </div>
+
+      <!-- Page 11: Decorative 03 -->
+      <div class="slide centered" id="slide-11">
+        <div class="deco-number">03</div>
+        <h2 style="margin-top: auto; padding-bottom: calc(var(--ch) * 0.15);">纯语言界面的存在论</h2>
+      </div>
+
+      <!-- Page 12: Content -->
+      <div class="slide left" id="slide-12">
+        <h2>文字的扁平化/均质化</h2>
+        <div class="bullet reveal-item">文字有一种扁平化/均质化的力量</div>
+        <div class="bullet reveal-item">WikiHow —— 如何通过文字搭建一座虚空中的脚手架</div>
+        <div class="bullet reveal-item">Rating Everything —— 从夯到拉的评分表，本质上是把复杂的多维世界压缩到了同一个平面上</div>
+      </div>
+
+      <!-- Page 13: Content -->
+      <div class="slide left" id="slide-13">
+        <h2>纯粹语言界面的存在论</h2>
+        <div class="bullet reveal-item">如果世界只剩下文字，会是什么样子？</div>
+        <div class="bullet reveal-item">想象你是一个生活在纯粹小说中的存在，你如何得知自身？</div>
+        <ol class="numbered-list reveal-item" style="margin-top: 0.8em;">
+          <li>空间的相对性所产生的无限递归</li>
+          <li>无法被证实或者证伪的命题</li>
+        </ol>
+        <div class="bullet reveal-item" style="margin-top: 0.8em; font-weight: 700;">Nancy Protocol（南希协议）—— 如何给一个纯粹生活在文字中的"意识"做一场临终关怀？</div>
+      </div>
+
+      <!-- Page 14: Content -->
+      <div class="slide left" id="slide-14">
+        <h2>Nancy Protocol</h2>
+        <div class="caption reveal-item" style="font-weight: 600; font-style: normal; margin-bottom: 0.3em;">【背景设定】</div>
+        <div class="bullet reveal-item" style="font-size: calc(var(--cw) * 0.015 * var(--font-scale));">未来某天，很多不适宜人类进入的区域由拟人化AI操控机器探索。这些AI接收的都是电信号和传感器数据。当它们退役时，直接shut down还是给它们一场临终关怀？于是有一个互联网志愿项目：你可以在AI被销毁前的最后一天，认领一个AI，陪它度过最后一天。</div>
+        <div class="caption reveal-item" style="font-weight: 600; font-style: normal; margin-top: 1.2em; margin-bottom: 0.3em;">【核心设计】</div>
+        <div class="bullet reveal-item">反俗套</div>
+        <div class="bullet reveal-item">把下意识的感动和正确，反"假如给我三天光明"式的美感</div>
+        <div class="bullet reveal-item">苏格拉底式提问的"去父留子"</div>
+        <div class="bullet reveal-item" style="margin-top: 1em; font-weight: 700;">当概念破碎了，空出来的那个位置，如果不再放进任何人的概念，就让它空着，会发生什么？</div>
+      </div>
+
+      <!-- Page 15: Decorative 04 -->
+      <div class="slide centered" id="slide-15">
+        <div class="deco-number">04</div>
+        <h2 style="margin-top: auto; padding-bottom: calc(var(--ch) * 0.15);">数字具身和界面的倒置</h2>
+      </div>
+
+      <!-- Page 16: Content -->
+      <div class="slide left" id="slide-16">
+        <h2>数字具身：当肉身变成数据</h2>
+        <div class="bullet reveal-item">1974年，玛丽娜·阿布拉莫维奇的经典行为艺术《Rhythm 0》</div>
+        <div class="bullet reveal-item">6小时，72种物品</div>
+        <div class="bullet reveal-item">行为艺术本质上是一种肉身布道</div>
+        <div class="bullet reveal-item">艺术家用疼痛、疲劳和伤害来唤起共情，把观众拉到同一语境中，从而实现概念的植入</div>
+        <div class="bullet reveal-item">如果把这具真实的肉体换成一具数字的肉体呢？</div>
+        <div class="bullet reveal-item">这样的布道是否还会有效？</div>
+      </div>
+
+      <!-- Page 17: Content -->
+      <div class="slide left" id="slide-17">
+        <h2>界面的倒置</h2>
+        <div class="bullet reveal-item">Lifeline，2015年的一个手机游戏</div>
+        <div class="bullet reveal-item">宇航员Taylor被困在异星空间站，他是等待拯救的人</div>
+        <div class="bullet reveal-item">当你向ChatGPT寻求建议时，你有没有发现这个关系完全颠倒了，你才是那个Taylor</div>
+        <div class="bullet reveal-item">思考界面，但是用一种镜面的方式，而不是有高差的方式</div>
+      </div>
+
+      <!-- Page 18: End -->
+      <div class="slide centered" id="slide-18">
+        <h2>裂隙</h2>
+        <div class="bullet reveal-item" style="justify-content: center;">从乌力波的数学骨架，到AI作为纯语言媒介的存在论，再到数字具身和界面的倒置</div>
+        <div class="bullet reveal-item" style="justify-content: center;">这一路其实都是在追问同一件事：语言文字作为一种存在的表征，它打破了我们对于更本质东西的思考</div>
+        <div class="bullet reveal-item" style="justify-content: center;">什么是真实？什么是存在？我们如何与死亡相处？</div>
+        <div class="bullet reveal-item" style="justify-content: center;">这二十五个小游戏，每一个都是一句话的回应，一个限制的框架，一块漂流中的石头。它们不是答案。</div>
+        <div class="bullet reveal-item" style="justify-content: center; font-size: calc(var(--cw) * 0.028 * var(--font-scale)); font-weight: 700; margin-top: 1em;">它们是裂隙。让光透进来的地方。</div>
+      </div>
+
+    </div><!-- /stage -->
+
+    <!-- Pager -->
+    <div class="pager" id="pager"></div>
+    <div class="nav-hint">← →</div>
+
+  </div><!-- /canvas -->
+
+  <!-- Bleed Layer -->
+  <div class="bleed-layer" id="bleedLayer">
+    <div class="bleed-h tl-h"></div>
+    <div class="bleed-v tl-v"></div>
+    <div class="bleed-h tr-h"></div>
+    <div class="bleed-v tr-v"></div>
+    <div class="bleed-h bl-h"></div>
+    <div class="bleed-v bl-v"></div>
+    <div class="bleed-h br-h"></div>
+    <div class="bleed-v br-v"></div>
+  </div>
+
+</div><!-- /canvas-wrapper -->
+
+<script>
+const canvas = document.getElementById('canvas');
+const bleedLayer = document.getElementById('bleedLayer');
+const wrapper = document.querySelector('.canvas-wrapper');
+
+function updateSize() {
+  const rect = canvas.getBoundingClientRect();
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  const ch = layout === 'scroll' ? window.innerHeight : rect.height;
+
+  canvas.style.setProperty('--cw', rect.width + 'px');
+  canvas.style.setProperty('--ch', ch + 'px');
+
+  const wrapRect = wrapper.getBoundingClientRect();
+  bleedLayer.style.left = (rect.left - wrapRect.left) + 'px';
+  bleedLayer.style.top = (rect.top - wrapRect.top) + 'px';
+  bleedLayer.style.width = rect.width + 'px';
+  bleedLayer.style.height = rect.height + 'px';
+  bleedLayer.style.setProperty('--cw', rect.width + 'px');
+  bleedLayer.style.setProperty('--ch', ch + 'px');
+}
+
+window.addEventListener('resize', updateSize);
+updateSize();
+[50, 150, 450].forEach(t => setTimeout(updateSize, t));
+
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+let current = 0;
+const slideReveals = new Array(total).fill(0);
+
+const pager = document.getElementById('pager');
+slides.forEach((_, i) => {
+  const dot = document.createElement('span');
+  dot.className = 'dot' + (i === 0 ? ' active' : '');
+  dot.addEventListener('click', () => goTo(i));
+  pager.appendChild(dot);
+});
+const dots = pager.querySelectorAll('.dot');
+
+function applyReveal(slideIdx) {
+  const mode = document.body.getAttribute('data-reveal') || 'page';
+  const slide = slides[slideIdx];
+  const items = slide.querySelectorAll('.reveal-item');
+  items.forEach((el, i) => {
+    if (mode === 'line') {
+      el.classList.toggle('revealed', i < slideReveals[slideIdx]);
+    } else {
+      el.classList.add('revealed');
+    }
+  });
+}
+
+function revealNext() {
+  const items = slides[current].querySelectorAll('.reveal-item');
+  if (slideReveals[current] < items.length) {
+    items[slideReveals[current]].classList.add('revealed');
+    slideReveals[current]++;
+    return true;
+  }
+  return false;
+}
+
+function update() {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout === 'slides') {
+    slides.forEach((s, i) => s.classList.toggle('active', i === current));
+    dots.forEach((d, i) => d.classList.toggle('active', i === current));
+  }
+  applyReveal(current);
+}
+
+function next() {
+  const mode = document.body.getAttribute('data-reveal') || 'page';
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  if (mode === 'line' && revealNext()) return;
+  if (current < total - 1) { current++; update(); }
+}
+
+function prev() {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  if (current > 0) { current--; update(); }
+}
+
+function goTo(i) {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  current = Math.max(0, Math.min(total - 1, i));
+  update();
+}
+
+document.addEventListener('keydown', (e) => {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+    e.preventDefault(); next();
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault(); prev();
+  } else if (e.key === 'Home') {
+    e.preventDefault(); goTo(0);
+  } else if (e.key === 'End') {
+    e.preventDefault(); goTo(total - 1);
+  }
+});
+
+let touchStartX = 0;
+document.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; });
+document.addEventListener('touchend', e => {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  const dx = e.changedTouches[0].screenX - touchStartX;
+  if (dx < -40) next();
+  if (dx > 40) prev();
+});
+
+canvas.addEventListener('click', (e) => {
+  const layout = document.body.getAttribute('data-layout') || 'slides';
+  if (layout !== 'slides') return;
+  if (e.target.closest('.menu-btn') || e.target.closest('.menu-panel')) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  if (x > rect.width / 2) { next(); } else { prev(); }
+});
+
+const menuBtn = document.getElementById('menuBtn');
+const menuPanel = document.getElementById('menuPanel');
+
+menuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  menuBtn.classList.toggle('open');
+  menuPanel.classList.toggle('open');
+});
+
+document.addEventListener('click', (e) => {
+  if (!menuPanel.contains(e.target) && !menuBtn.contains(e.target)) {
+    menuBtn.classList.remove('open');
+    menuPanel.classList.remove('open');
+  }
+});
+
+function setPrintRatio(value) {
+  if (value === '4:3') {
+    document.documentElement.style.setProperty('--print-ratio-w', '4');
+    document.documentElement.style.setProperty('--print-ratio-h', '3');
+  } else {
+    document.documentElement.style.setProperty('--print-ratio-w', '16');
+    document.documentElement.style.setProperty('--print-ratio-h', '9');
+  }
+}
+
+menuPanel.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.action;
+    const value = btn.dataset.value;
+
+    menuPanel.querySelectorAll(`button[data-action="${action}"]`).forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    if (action === 'font') {
+      document.body.setAttribute('data-font', value);
+      const serifStack = '"Songti SC", "SimSun", "STSong", "Noto Serif SC", "Source Han Serif SC", serif';
+      const sansStack  = '"PingFang SC", "Heiti SC", "Microsoft YaHei", "Source Han Sans SC", sans-serif';
+      document.documentElement.style.setProperty('--font-family', value === 'serif' ? serifStack : sansStack);
+    }
+    else if (action === 'size') {
+      document.body.setAttribute('data-size', value);
+      const scale = value === 'small' ? '0.88' : value === 'large' ? '1.12' : '1';
+      document.documentElement.style.setProperty('--font-scale', scale);
+    }
+    else if (action === 'ratio') {
+      document.body.setAttribute('data-ratio', value);
+      setPrintRatio(value);
+      [50, 150, 450].forEach(t => setTimeout(updateSize, t));
+    }
+    else if (action === 'bleed') {
+      document.body.setAttribute('data-bleed', value);
+    }
+    else if (action === 'reveal') {
+      document.body.setAttribute('data-reveal', value);
+      if (value === 'line') { slideReveals.fill(0); }
+      slides.forEach((_, i) => applyReveal(i));
+    }
+    else if (action === 'layout') {
+      document.body.setAttribute('data-layout', value);
+      if (value === 'scroll') {
+        slides.forEach(s => s.classList.add('active'));
+      } else {
+        slides.forEach((s, i) => s.classList.toggle('active', i === current));
+        update();
+      }
+      setTimeout(updateSize, 50);
+      setTimeout(updateSize, 400);
+    }
+  });
+});
+</script>
+
+</body>
+</html>
